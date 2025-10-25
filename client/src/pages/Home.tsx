@@ -20,7 +20,7 @@ export default function Home() {
           <div className="flex items-center gap-4">
             {/* 始终显示已登录状态的UI */}
             <>
-              <span className="text-sm text-gray-600">Welcome, {user?.name || "测试用户"}</span>
+              <span className="text-sm text-gray-600">Welcome, {user?.name || "Bruce"}</span>
               <Link href="/prices">
                 <Button variant="outline">Price Management</Button>
               </Link>

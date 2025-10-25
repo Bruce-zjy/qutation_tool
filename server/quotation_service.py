@@ -20,10 +20,10 @@ def load_product_data():
     """Load product data from pickle file"""
     return pd.read_pickle(PRODUCT_DATA_PATH)
 
-def search_product(query, limit=10):
+def search_product(query, limit=10, offset=0):
     """
-    Search for products using fuzzy matching
-    Returns a list of matching products with their details
+    Search for products using fuzzy matching with offset support
+    Returns a dict with items and total count
     """
     dataframe = load_product_data()
     temp_df = dataframe.copy()
@@ -34,7 +34,28 @@ def search_product(query, limit=10):
                                   temp_df['Cut-Off'].astype(str).fillna('') + ' ' + \
                                   temp_df['Pack'].astype(str).fillna('')
 
-    matches = process.extract(query, temp_df['combined_text'], limit=limit*2, scorer=fuzz.token_set_ratio)
+    # If query is empty, return plain slice without fuzzy search
+    if str(query).strip() == "":
+      total = int(len(temp_df))
+      items = []
+      rows = dataframe.iloc[offset:offset+limit]
+      for _, original_row in rows.iterrows():
+          result = {
+              'product': str(original_row['Product']) if 'Product' in original_row else '',
+              'description': str(original_row['Description']) if 'Description' in original_row else '',
+              'cutOff': str(original_row['Cut-Off']) if 'Cut-Off' in original_row and pd.notna(original_row['Cut-Off']) else '',
+              'pack': str(original_row['Pack']) if 'Pack' in original_row and pd.notna(original_row['Pack']) else '',
+              'baseUsdFinished': float(original_row['成品_USD']) if '成品_USD' in original_row and pd.notna(original_row['成品_USD']) else 0.0,
+              'baseRmbFinished': float(original_row['成品_RMB']) if '成品_RMB' in original_row and pd.notna(original_row['成品_RMB']) else 0.0,
+              'baseUsdBulk': float(original_row['大板_USD']) if '大板_USD' in original_row and pd.notna(original_row['大板_USD']) else 0.0,
+              'baseRmbBulk': float(original_row['大板_RMB']) if '大板_RMB' in original_row and pd.notna(original_row['大板_RMB']) else 0.0,
+          }
+          items.append(result)
+      return { 'items': items, 'total': total }
+
+    # Ensure we fetch all candidates to compute accurate total for non-empty query
+    search_limit = len(temp_df)
+    matches = process.extract(query, temp_df['combined_text'], limit=search_limit, scorer=fuzz.token_set_ratio)
     
     all_matches = {}
     for match_str, score, idx in matches:
@@ -42,24 +63,26 @@ def search_product(query, limit=10):
             all_matches[idx] = score
 
     sorted_matches = sorted(all_matches.items(), key=lambda item: item[1], reverse=True)
+    # Filter out zero-score results
+    filtered_matches = [(original_idx, s) for (original_idx, s) in sorted_matches if s > 0]
+    total = len(filtered_matches)
 
-    results = []
-    for original_idx, score in sorted_matches[:limit]:
+    items = []
+    for original_idx, score in filtered_matches[offset:offset+limit]:
         original_row = dataframe.loc[original_idx].copy()
         result = {
             'product': str(original_row['Product']),
             'description': str(original_row['Description']),
             'cutOff': str(original_row['Cut-Off']) if pd.notna(original_row['Cut-Off']) else '',
             'pack': str(original_row['Pack']) if pd.notna(original_row['Pack']) else '',
-            'baseUsdFinished': float(original_row['成品_USD']) if pd.notna(original_row['成品_USD']) else 0,
-            'baseRmbFinished': float(original_row['成品_RMB']) if pd.notna(original_row['成品_RMB']) else 0,
-            'baseUsdBulk': float(original_row['大板_USD']) if pd.notna(original_row['大板_USD']) else 0,
-            'baseRmbBulk': float(original_row['大板_RMB']) if pd.notna(original_row['大板_RMB']) else 0,
-            'matchScore': int(score)
+            'baseUsdFinished': float(original_row['成品_USD']) if pd.notna(original_row['成品_USD']) else 0.0,
+            'baseRmbFinished': float(original_row['成品_RMB']) if pd.notna(original_row['成品_RMB']) else 0.0,
+            'baseUsdBulk': float(original_row['大板_USD']) if pd.notna(original_row['大板_USD']) else 0.0,
+            'baseRmbBulk': float(original_row['大板_RMB']) if pd.notna(original_row['大板_RMB']) else 0.0,
         }
-        results.append(result)
-        
-    return results
+        items.append(result)
+
+    return { 'items': items, 'total': int(total) }
 
 def calculate_quotation_prices(base_usd, add_on_percentage=0.10, exchange_rate=7.1, tax_rate=0.13):
     """
@@ -239,7 +262,8 @@ def main():
                 sys.exit(1)
             query = sys.argv[2]
             limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-            results = search_product(query, limit)
+            offset = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+            results = search_product(query, limit, offset)
             print(json.dumps({'success': True, 'data': results}))
         
         elif command == 'calculate':
@@ -259,9 +283,19 @@ def main():
                 sys.exit(1)
             data_json = sys.argv[2]
             output_path = sys.argv[3]
-            quotation_data = json.loads(data_json)
-            result_path = generate_excel_quotation(quotation_data, output_path)
-            print(json.dumps({'success': True, 'path': result_path}))
+            data = json.loads(data_json)
+
+            # Create a DataFrame for items to be exported
+            df = pd.DataFrame(data['items'])
+
+            # Add metadata
+            df['Quotation Number'] = data.get('quotationNumber', '')
+            df['Customer Name'] = data.get('customerName', '')
+
+            # Save to Excel
+            df.to_excel(output_path, index=False)
+
+            print(json.dumps({'success': True, 'data': {'output': output_path}}))
         
         elif command == 'export_pdf':
             if len(sys.argv) < 4:
@@ -269,16 +303,41 @@ def main():
                 sys.exit(1)
             data_json = sys.argv[2]
             output_path = sys.argv[3]
-            quotation_data = json.loads(data_json)
-            result_path = generate_pdf_quotation(quotation_data, output_path)
-            print(json.dumps({'success': True, 'path': result_path}))
+
+            # For simplicity, we'll create a text-based PDF using reportlab
+            try:
+                from reportlab.lib.pagesizes import letter
+                from reportlab.pdfgen import canvas
+            except ImportError:
+                print(json.dumps({'error': 'reportlab library is required for PDF export'}))
+                sys.exit(1)
+
+            data = json.loads(data_json)
+            c = canvas.Canvas(output_path, pagesize=letter)
+            width, height = letter
+
+            c.setFont("Helvetica", 12)
+            c.drawString(50, height - 50, f"Quotation Number: {data.get('quotationNumber', '')}")
+            c.drawString(50, height - 70, f"Customer Name: {data.get('customerName', '')}")
+
+            y = height - 100
+            for item in data['items']:
+                line = f"Product: {item.get('product', '')}, Qty: {item.get('quantity', 0)}, USD: {item.get('finalUsdFinished', 0)}, RMB: {item.get('finalRmbFinished', 0)}"
+                c.drawString(50, y, line)
+                y -= 20
+                if y < 50:
+                    c.showPage()
+                    y = height - 50
+
+            c.save()
+
+            print(json.dumps({'success': True, 'data': {'output': output_path}}))
         
         else:
             print(json.dumps({'error': f'Unknown command: {command}'}))
             sys.exit(1)
-    
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        print(json.dumps({'success': False, 'error': str(e)}))
         sys.exit(1)
 
 if __name__ == '__main__':

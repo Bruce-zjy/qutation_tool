@@ -19,10 +19,22 @@ import {
   getQuotationByNumber,
   createQuotationItem,
   getQuotationItemsByQuotationId,
-  deleteQuotation
+  deleteQuotation,
+  getUser,
+  upsertUser
 } from "./db";
 
 const execAsync = promisify(exec);
+
+// 为匿名模式准备一个全局用户ID（如数据库可用）
+async function getAnonymousUserId(): Promise<number> {
+  const existing = await getUser("anonymous");
+  if (existing?.id) return existing.id;
+  await upsertUser({ openId: "anonymous", name: "匿名用户", loginMethod: "none" });
+  const created = await getUser("anonymous");
+  if (!created) throw new Error("Failed to initialize anonymous user");
+  return created.id;
+}
 
 // Helper function to call Python quotation service
 async function callPythonService(command: string, args: string[] = []): Promise<any> {
@@ -62,39 +74,42 @@ export const appRouter = router({
   }),
 
   products: router({
-    search: protectedProcedure
+    search: publicProcedure
       .input(z.object({
-        query: z.string().min(1),
-        limit: z.number().min(1).max(50).optional().default(10)
+        query: z.string(),
+        limit: z.number().min(1).max(100).optional().default(10),
+        offset: z.number().min(0).optional().default(0),
       }))
       .query(async ({ input }) => {
-        const results = await callPythonService('search', [input.query, input.limit.toString()]);
+        const results = await callPythonService('search', [
+          input.query,
+          input.limit.toString(),
+          (input.offset ?? 0).toString(),
+        ]);
         return results;
       }),
   }),
 
   quotations: router({
-    list: protectedProcedure
-      .query(async ({ ctx }) => {
-        const quotations = await getQuotationsByUserId(ctx.user.id);
+    list: publicProcedure
+      .query(async () => {
+        const anonId = await getAnonymousUserId();
+        const quotations = await getQuotationsByUserId(anonId);
         return quotations;
       }),
 
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
+      .query(async ({ input }) => {
         const quotation = await getQuotationById(input.id);
         if (!quotation) {
           throw new Error('Quotation not found');
-        }
-        if (quotation.userId !== ctx.user.id) {
-          throw new Error('Unauthorized');
         }
         const items = await getQuotationItemsByQuotationId(input.id);
         return { ...quotation, items };
       }),
 
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({
         customerName: z.string().optional(),
         exchangeRate: z.string().default("7.1"),
@@ -117,14 +132,17 @@ export const appRouter = router({
           finalRmbBulk: z.string().optional(),
         }))
       }))
-      .mutation(async ({ input, ctx }) => {
+      .mutation(async ({ input }) => {
         // Generate quotation number
         const timestamp = Date.now();
         const quotationNumber = `QT-${timestamp}`;
 
+        // Resolve anonymous user ID for DB records
+        const anonId = await getAnonymousUserId();
+
         // Create quotation
         await createQuotation({
-          userId: ctx.user.id,
+          userId: anonId,
           customerName: input.customerName,
           quotationNumber,
           exchangeRate: input.exchangeRate,
@@ -148,29 +166,23 @@ export const appRouter = router({
         return { id: createdQuotation.id, quotationNumber };
       }),
 
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
+      .mutation(async ({ input }) => {
         const quotation = await getQuotationById(input.id);
         if (!quotation) {
           throw new Error('Quotation not found');
-        }
-        if (quotation.userId !== ctx.user.id) {
-          throw new Error('Unauthorized');
         }
         await deleteQuotation(input.id);
         return { success: true };
       }),
 
-    exportExcel: protectedProcedure
+    exportExcel: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
+      .mutation(async ({ input }) => {
         const quotation = await getQuotationById(input.id);
         if (!quotation) {
           throw new Error('Quotation not found');
-        }
-        if (quotation.userId !== ctx.user.id) {
-          throw new Error('Unauthorized');
         }
 
         const items = await getQuotationItemsByQuotationId(input.id);
@@ -211,15 +223,12 @@ export const appRouter = router({
         };
       }),
 
-    exportPdf: protectedProcedure
+    exportPdf: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
+      .mutation(async ({ input }) => {
         const quotation = await getQuotationById(input.id);
         if (!quotation) {
           throw new Error('Quotation not found');
-        }
-        if (quotation.userId !== ctx.user.id) {
-          throw new Error('Unauthorized');
         }
 
         const items = await getQuotationItemsByQuotationId(input.id);

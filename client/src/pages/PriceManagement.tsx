@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { ArrowLeft, Plus, Search, Edit, Trash2, Save } from "lucide-react";
+import { ArrowLeft, Plus, Search, Edit, Trash2, Save, ChevronLeft, ChevronRight } from "lucide-react";
 import { APP_TITLE } from "@/const";
 
 export default function PriceManagement() {
@@ -31,17 +31,35 @@ export default function PriceManagement() {
     baseRmbBulk: "",
   });
 
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
+  const offset = (page - 1) * pageSize;
+
   const searchMutation = trpc.products.search.useQuery(
-    { query: searchQuery, limit: 50 },
-    { enabled: searchQuery.length > 0 }
+    { query: searchQuery, limit: pageSize, offset },
+    { enabled: searchQuery.length > 0, keepPreviousData: true }
   );
 
   const allProductsQuery = trpc.products.search.useQuery(
-    { query: "", limit: 100 },
-    { enabled: searchQuery.length === 0 }
+    { query: "", limit: pageSize, offset },
+    { enabled: searchQuery.length === 0, keepPreviousData: true }
   );
 
-  const products = searchQuery.length > 0 ? searchMutation.data : allProductsQuery.data;
+  const activeData = searchQuery.length > 0 ? searchMutation.data : allProductsQuery.data;
+  // Items and total from backend pagination
+  const products = activeData?.items ?? [];
+  const total = activeData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const canGoPrev = page > 1;
+  const canGoNext = page < totalPages;
+
+  const goToInputPage = () => {
+    const n = parseInt(pageInput || "1", 10);
+    const target = isNaN(n) ? 1 : Math.min(totalPages, Math.max(1, n));
+    setPage(target);
+    setPageInput(String(target));
+  };
 
   const handleEdit = (product: any) => {
     setSelectedProduct(product);
@@ -133,7 +151,11 @@ export default function PriceManagement() {
                 <Input
                   placeholder="Search products..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPage(1);
+                    setPageInput("1");
+                  }}
                   className="pl-10"
                 />
               </div>
@@ -197,195 +219,145 @@ export default function PriceManagement() {
                 </TableBody>
               </Table>
             </div>
+            {/* Pagination */}
+            <div className="mt-4 flex items-center justify-between">
+              <div className="text-sm text-gray-500">Page {page} / {totalPages}</div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setPage(p => { const np = Math.max(1, p - 1); setPageInput(String(np)); return np; })}
+                  disabled={!canGoPrev}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setPage(p => { const np = Math.min(totalPages, p + 1); setPageInput(String(np)); return np; })}
+                  disabled={!canGoNext}
+                >
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+                <div className="flex items-center gap-2 ml-4">
+                  <span className="text-sm text-gray-600">Go to page</span>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") goToInputPage(); }}
+                    className="w-20"
+                  />
+                  <Button variant="outline" onClick={goToInputPage}>Go</Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Edit Dialog */}
+            <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+              <DialogContent className="sm:max-w-[600px]">
+                <DialogHeader>
+                  <DialogTitle>Edit Product</DialogTitle>
+                  <DialogDescription>Update product details and base prices</DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="product">Product</Label>
+                    <Input id="product" value={formData.product} onChange={(e) => setFormData({ ...formData, product: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="description">Description</Label>
+                    <Input id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="pack">Pack</Label>
+                    <Input id="pack" value={formData.pack} onChange={(e) => setFormData({ ...formData, pack: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="cutOff">Cut-Off</Label>
+                    <Input id="cutOff" value={formData.cutOff} onChange={(e) => setFormData({ ...formData, cutOff: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="baseUsdFinished">Finished USD</Label>
+                    <Input id="baseUsdFinished" value={formData.baseUsdFinished} onChange={(e) => setFormData({ ...formData, baseUsdFinished: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="baseRmbFinished">Finished RMB</Label>
+                    <Input id="baseRmbFinished" value={formData.baseRmbFinished} onChange={(e) => setFormData({ ...formData, baseRmbFinished: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="baseUsdBulk">Bulk USD</Label>
+                    <Input id="baseUsdBulk" value={formData.baseUsdBulk} onChange={(e) => setFormData({ ...formData, baseUsdBulk: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="baseRmbBulk">Bulk RMB</Label>
+                    <Input id="baseRmbBulk" value={formData.baseRmbBulk} onChange={(e) => setFormData({ ...formData, baseRmbBulk: e.target.value })} />
+                  </div>
+                </div>
+                <div className="mt-6 flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleSave}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Add Dialog */}
+            <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+              <DialogContent className="sm:max-w-[600px]">
+                <DialogHeader>
+                  <DialogTitle>Add New Product</DialogTitle>
+                  <DialogDescription>Enter product details and base prices</DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="newProduct">Product</Label>
+                    <Input id="newProduct" value={formData.product} onChange={(e) => setFormData({ ...formData, product: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newDescription">Description</Label>
+                    <Input id="newDescription" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newPack">Pack</Label>
+                    <Input id="newPack" value={formData.pack} onChange={(e) => setFormData({ ...formData, pack: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newCutOff">Cut-Off</Label>
+                    <Input id="newCutOff" value={formData.cutOff} onChange={(e) => setFormData({ ...formData, cutOff: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newBaseUsdFinished">Finished USD</Label>
+                    <Input id="newBaseUsdFinished" value={formData.baseUsdFinished} onChange={(e) => setFormData({ ...formData, baseUsdFinished: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newBaseRmbFinished">Finished RMB</Label>
+                    <Input id="newBaseRmbFinished" value={formData.baseRmbFinished} onChange={(e) => setFormData({ ...formData, baseRmbFinished: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newBaseUsdBulk">Bulk USD</Label>
+                    <Input id="newBaseUsdBulk" value={formData.baseUsdBulk} onChange={(e) => setFormData({ ...formData, baseUsdBulk: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newBaseRmbBulk">Bulk RMB</Label>
+                    <Input id="newBaseRmbBulk" value={formData.baseRmbBulk} onChange={(e) => setFormData({ ...formData, baseRmbBulk: e.target.value })} />
+                  </div>
+                </div>
+                <div className="mt-6 flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setAddDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleAddProduct}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Add Product
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
       </main>
-
-      {/* Edit Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit Product</DialogTitle>
-            <DialogDescription>Update product pricing information</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="product">Product Name</Label>
-              <Input
-                id="product"
-                value={formData.product}
-                onChange={(e) => setFormData({ ...formData, product: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="pack">Pack</Label>
-              <Input
-                id="pack"
-                value={formData.pack}
-                onChange={(e) => setFormData({ ...formData, pack: e.target.value })}
-              />
-            </div>
-            <div className="col-span-2 space-y-2">
-              <Label htmlFor="description">Description</Label>
-              <Input
-                id="description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cutOff">Cut-Off</Label>
-              <Input
-                id="cutOff"
-                value={formData.cutOff}
-                onChange={(e) => setFormData({ ...formData, cutOff: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="baseUsdFinished">Finished USD</Label>
-              <Input
-                id="baseUsdFinished"
-                type="number"
-                step="0.0001"
-                value={formData.baseUsdFinished}
-                onChange={(e) => setFormData({ ...formData, baseUsdFinished: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="baseRmbFinished">Finished RMB</Label>
-              <Input
-                id="baseRmbFinished"
-                type="number"
-                step="0.01"
-                value={formData.baseRmbFinished}
-                onChange={(e) => setFormData({ ...formData, baseRmbFinished: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="baseUsdBulk">Bulk USD</Label>
-              <Input
-                id="baseUsdBulk"
-                type="number"
-                step="0.0001"
-                value={formData.baseUsdBulk}
-                onChange={(e) => setFormData({ ...formData, baseUsdBulk: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="baseRmbBulk">Bulk RMB</Label>
-              <Input
-                id="baseRmbBulk"
-                type="number"
-                step="0.01"
-                value={formData.baseRmbBulk}
-                onChange={(e) => setFormData({ ...formData, baseRmbBulk: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Changes
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Dialog */}
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Add New Product</DialogTitle>
-            <DialogDescription>Enter product pricing information</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="new-product">Product Name</Label>
-              <Input
-                id="new-product"
-                value={formData.product}
-                onChange={(e) => setFormData({ ...formData, product: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-pack">Pack</Label>
-              <Input
-                id="new-pack"
-                value={formData.pack}
-                onChange={(e) => setFormData({ ...formData, pack: e.target.value })}
-              />
-            </div>
-            <div className="col-span-2 space-y-2">
-              <Label htmlFor="new-description">Description</Label>
-              <Input
-                id="new-description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-cutOff">Cut-Off</Label>
-              <Input
-                id="new-cutOff"
-                value={formData.cutOff}
-                onChange={(e) => setFormData({ ...formData, cutOff: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-baseUsdFinished">Finished USD</Label>
-              <Input
-                id="new-baseUsdFinished"
-                type="number"
-                step="0.0001"
-                value={formData.baseUsdFinished}
-                onChange={(e) => setFormData({ ...formData, baseUsdFinished: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-baseRmbFinished">Finished RMB</Label>
-              <Input
-                id="new-baseRmbFinished"
-                type="number"
-                step="0.01"
-                value={formData.baseRmbFinished}
-                onChange={(e) => setFormData({ ...formData, baseRmbFinished: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-baseUsdBulk">Bulk USD</Label>
-              <Input
-                id="new-baseUsdBulk"
-                type="number"
-                step="0.0001"
-                value={formData.baseUsdBulk}
-                onChange={(e) => setFormData({ ...formData, baseUsdBulk: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="new-baseRmbBulk">Bulk RMB</Label>
-              <Input
-                id="new-baseRmbBulk"
-                type="number"
-                step="0.01"
-                value={formData.baseRmbBulk}
-                onChange={(e) => setFormData({ ...formData, baseRmbBulk: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddProduct}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Product
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
